@@ -8,6 +8,7 @@
 
 ## API
 
+文献Color Reduction for Complex Document Images的一个实现
 1. **edge_smooth.cpp**
 
    对应论文第II节：EDGE PRESERVING SMOOTHING
