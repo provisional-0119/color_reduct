@@ -1,0 +1,3 @@
+/home/xjs/mycodebase/c++/color_reduct2/build/CMakeFiles/main.dir
+/home/xjs/mycodebase/c++/color_reduct2/build/CMakeFiles/edit_cache.dir
+/home/xjs/mycodebase/c++/color_reduct2/build/CMakeFiles/rebuild_cache.dir

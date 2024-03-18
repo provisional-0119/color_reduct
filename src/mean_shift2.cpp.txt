@@ -1,0 +1,184 @@
+#include <iostream>
+#include <opencv2/opencv.hpp>
+#include <vector>
+#include <map>
+
+/**
+ * 废弃版本
+*/
+
+class PointWithLoc {
+public:
+    PointWithLoc(int x, int y, int z, cv::Vec3b pixel, int count): pt(x, y, z), pixel(pixel), count(count) {} 
+
+    cv::Point3i pt;
+    cv::Vec3f pixel;
+    int count;
+};
+
+// 计算曼哈顿距离
+float manhattanDistance(const cv::Vec3f& point1, const cv::Vec3f& point2) {
+    return cv::abs(point1[0] - point2[0]) + cv::abs(point1[1] - point2[1]) + cv::abs(point1[2] - point2[2]);
+}
+
+// 根据偏移向量判断是否在当前簇
+bool checkInCluster(cv::Vec3f diff, int h) {
+    for (int i = 0; i < 3; i ++ ) {
+        if (cv::abs(diff[i]) > h) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// 根据shift判断是否收敛
+bool checkShiftConverge(cv::Vec3f shift, int dm) {
+    double s = 0;
+    for (int i = 0; i < 3; i ++ ) {
+        s += cv::abs(shift[i]);
+    }
+    return s <= dm;
+}
+
+void addVector(std::vector<int>& v1, const std::vector<int>& v2) {
+    assert(v1.size() == v2.size());
+    for (int i = 0; i < v1.size(); i ++ ) {
+        v1[i] += v2[i];
+    }
+}
+
+/**
+ * 将类似直方图的立方块统计矩阵中的有值的像素点 提取成列表
+*/
+std::vector<PointWithLoc> histToPointSet(const cv::Mat& weight, const cv::Mat& count) {
+    int cl = weight.size().height;
+
+    // 根据直方图的个数以及权重 构建像素点集S
+    std::vector<PointWithLoc> pointSet;
+    for (int i = 0; i < cl; i++) {
+        for (int j = 0; j < cl; j++) {
+            for (int k = 0; k < cl; k++) {
+                if (count.at<int>(i, j, k)) {
+                    pointSet.push_back(PointWithLoc(i, j, k, weight.at<cv::Vec3f>(i, j, k), count.at<int>(i, j, k)));
+                }
+            }
+        }
+    }
+
+    return pointSet;
+}
+
+/**
+ * 点集合转回 颜色矩阵
+*/
+cv::Mat pointSetToWeight(std::vector<PointWithLoc> pointSet, int len) {
+    int sz[] = {len, len, len};
+    cv::Mat weight = cv::Mat::zeros(3, sz, CV_32FC3);
+
+    for (PointWithLoc point: pointSet) {
+        weight.at<cv::Vec3f>(point.pt.x, point.pt.y, point.pt.z) = point.pixel;
+    }
+    return weight;
+}
+
+/**
+ * weight: rgb三通道分割为一定大小的立方体后的权重颜色矩阵
+ * count: weight对应的数量
+ * dm: meanShift收敛的阈值
+ * h: 聚类中心到其他被聚类点的最大立方半径
+*/
+cv::Mat meanShift(const cv::Mat& weight, const cv::Mat& count, int dm = 3, int h = 32) {
+
+    // 根据直方图的个数以及权重 构建像素点集S
+    std::vector<PointWithLoc> pointSet = histToPointSet(weight, count);
+
+    int pointNum = pointSet.size();
+
+    std::cout << "meanshift之前颜色个数" << pointNum << '\n';
+
+    // 记录均值漂移过程中的遍历次数, 每个聚类中心的坐标对应其所在类点出现的次数
+    std::vector<std::pair<cv::Vec3f, std::vector<int>>> visitedCount;
+    // 记录是否被聚类过
+    std::vector<bool> vis(pointNum);
+
+    for (int i = 0; i < pointNum; i ++ ) {
+        if (vis[i]) {
+            continue;
+        }
+        
+        // 记录当前聚类过程各个点的出现次数
+        std::vector<int> nowCount(pointSet.size());
+
+        cv::Vec3f center = pointSet[i].pixel;
+        
+        while(true) {
+            // 计算shift
+            cv::Vec3d shift(0.0, 0.0, 0.0);
+            int cluster_num = 0;
+
+            // 遍历每个点，看是否在当前选中中心规定范围之内，如果在则记录对应的shift, 并累加次数
+            for (int j = 0; j < pointNum; j ++ ) {
+                PointWithLoc p = pointSet[j];
+                cv::Vec3f diff = p.pixel - center;
+                if (checkInCluster(diff, h)) {
+                    vis[j] = true;
+                    nowCount[j] ++;
+                    shift += diff * p.count;
+                    cluster_num += p.count;
+                }
+            }
+            shift /= cluster_num;
+
+            // 偏移中心点
+            center += shift;
+
+
+            // 如果收敛则记录当前中心即出现次数，并退出
+            if (checkShiftConverge(shift, dm)) {
+                bool exist_cluster = false;
+                for (int j = 0; j < visitedCount.size(); j ++ ) {
+
+                    // 与之前的聚类中心接近
+                    if(checkShiftConverge(visitedCount[j].first - center, dm)) {
+                        // 更改聚类中心
+                        visitedCount[j].first = (visitedCount[j].first * (int)visitedCount[j].second.size() 
+                            + center * cluster_num) / ((int)visitedCount[j].second.size() + cluster_num);
+                        // 叠加出现次数
+                        addVector(visitedCount[j].second, nowCount);
+
+                        exist_cluster = true;
+                        break;
+                    }
+                }
+                if (!exist_cluster) {
+                    visitedCount.push_back({center, nowCount});
+                }
+                break;
+            }
+        }
+    }    
+
+    std::cout << "meanShift后的颜色个数" << visitedCount.size() << '\n';
+
+    // 根据上述的遍历次数得出 在某类中最大的出现次数, 并修改点集中像素值为对应的中心点
+    std::vector<int> maxCounts(pointNum);
+
+    for (auto centerAndCount : visitedCount) {
+        cv::Vec3f center = centerAndCount.first;
+        
+        std::vector<int> counts = centerAndCount.second;
+        for (int i = 0; i < pointNum; i ++ ) {
+            if (counts[i] > maxCounts[i]) {
+                maxCounts[i] = counts[i];
+                pointSet[i].pixel = center;
+            }
+        }
+    }
+
+    // 将点集合 转换回 类似直方图的形式
+    cv::Mat newWeight = pointSetToWeight(pointSet, weight.size().height);
+
+    return newWeight;
+}
+
+

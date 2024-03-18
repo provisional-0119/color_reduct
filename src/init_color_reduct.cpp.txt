@@ -1,0 +1,61 @@
+#include <iostream>
+#include <vector>
+#include <opencv2/opencv.hpp>
+
+/* 无效的方案*/
+
+cv::Mat getInitColorSet(cv::Mat img, int dh) {
+    int color_num = 0;
+
+    // 获取图像的直方图
+    const int bin = 256;
+    // std::vector<std::vector<std::vector<int>>> p(bin, std::vector<std::vector<int>>(bin, std::vector<int>(bin)));
+    int len = 2 * dh;
+    int cl = (bin + len - 1) / len;
+    int sz[] = {cl, cl, cl};
+    cv::Mat weight = cv::Mat::ones(3, sz, CV_32SC3);
+    cv::Mat count = cv::Mat::ones(3, sz, CV_32SC1);
+    int h = img.rows;
+    int w = img.cols;
+    for (int i = 0; i < h; i++) {
+        for (int j = 0; j < w; j++) {
+            cv::Vec3b pixel = img.at<cv::Vec3b>(i, j);
+            cv::Vec3i loc(static_cast<int>(pixel[0]) / len, static_cast<int>(pixel[1]) / len, static_cast<int>(pixel[2]) / len);
+            weight.at<cv::Vec3i>(loc) += pixel;
+            count.at<int>(loc) += 1;
+        }
+    }
+    for (int i = 0; i < cl; i++) {
+        for (int j = 0; j < cl; j++) {
+            for (int k = 0; k < cl; k++) {
+                if (count.at<int>(i, j, k)) {
+                    color_num += 1;
+                    weight.at<cv::Vec3i>(i, j, k) /= count.at<int>(i, j, k);
+                    // std::cout << weight.at<cv::Vec3i>(i, j, k) << std::endl;
+                }
+            }
+        }
+    }
+    return weight;
+}
+
+cv::Mat initColorReduct(cv::Mat img, int dh) {
+    cv::Mat weight = getInitColorSet(img, dh);
+    cv::Mat new_img = img.clone();
+    
+    const int bin = 256;
+    int len = 2 * dh;  
+    int cl = (bin + len - 1) / len;
+
+    int h = img.rows;
+    int w = img.cols;
+    for (int i = 0; i < h; i++) {
+        for (int j = 0; j < w; j++) {
+            cv::Vec3b pixel = img.at<cv::Vec3b>(i, j);
+            cv::Vec3i loc(static_cast<int>(pixel[0]) / len, static_cast<int>(pixel[1]) / len, static_cast<int>(pixel[2]) / len);
+            new_img.at<cv::Vec3b>(i, j) = weight.at<cv::Vec3i>(loc);
+        }
+    }
+    return new_img;
+}
+
